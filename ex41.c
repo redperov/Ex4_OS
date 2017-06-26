@@ -19,6 +19,13 @@
 
 #define SHM_SIZE 4096
 
+typedef union {
+
+    int             val;
+    struct semid_ds *buf;
+    ushort          *array;
+}   semun;
+
 /**
  * function name: WriteMessage.
  * The input: message to write.
@@ -41,9 +48,13 @@ int main(){
 
     key_t key;
     int shmid;
+    int semid;
     int stop;
+    int resultValue;
     char command;
     char *data;
+    semun semarg;
+    struct sembuf sops[1];
 
     //Create key.
     key = ftok("318810637.txt", 'A');
@@ -75,17 +86,64 @@ int main(){
         exit(1);
     }
 
+    semid = semget(key, 1, 0);
+
+    //Check if semget succeeded.
+    if(semid < 0){
+
+        perror("Error: semget faild.\n");
+        exit(1);
+    }
+
+    sops->sem_num = 0;
+    sops->sem_flg = 0;
+
     stop = 0;
 
     while(!stop){
 
         WriteMessage("Please enter request code\n");
 
+        //Receive command from user.
         command = GetUserCommand();
+
+        //Lock.
+        sops->sem_op = -1;
+        resultValue = semop(semid, sops, 1);
+
+        //Check if semop succeeded.
+        if(resultValue < 0){
+
+            perror("Error: semop failed.\n");
+            exit(1);
+        }
+
+        //Handle user command.
         stop = HandleUserCommand(command, data);
+
+        //Unlock.
+        sops->sem_op = 1;
+        resultValue = semop(semid, sops, 1);
+
+        //Check if semop succeeded.
+        if(resultValue < 0){
+
+            perror("Error: semop failed.\n");
+            exit(1);
+        }
     }
 
+    //Detach shared memory.
+    resultValue = shmdt(data);
 
+    //Check if shmdt succeeded.
+    if(resultValue < 0){
+
+        perror("Error: shmdt failed.\n");
+        exit(1);
+    }
+
+    //TODO check if there are other resources to clean, like the semaphore
 }
 
 void WriteMessage(char *message){
@@ -125,7 +183,6 @@ int HandleUserCommand(char command, char *data){
 
     if(command == 'i'){
 
-        //TODO clean memory and exit
         return 1;
     }
     else{
