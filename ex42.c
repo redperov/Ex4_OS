@@ -161,6 +161,9 @@ int main() {
     //Create jobs queue.
     //Queue *jobsQueue; TODO decide if to leave as global or make local.
     jobsQueue = InitializeQueue();
+    
+    //Initialize mutexes.
+    InitMutexes();
 
     //Create thread pool.
     CreateThreadPool(threads);
@@ -239,7 +242,7 @@ int main() {
     resultValue = semctl(semid, 0, IPC_RMID, semarg);
 
     //Check if semctl succeeded.
-    if(resultValue < 0){
+    if (resultValue < 0) {
 
         perror("Error: semctl delete failed.\n");
         exit(1);
@@ -252,7 +255,7 @@ int main() {
     resultValue = shmdt(data);
 
     //Check if shmdt succeeded.
-    if(resultValue < 0){
+    if (resultValue < 0) {
 
         perror("Error: shmdt failed.\n");
         exit(1);
@@ -262,7 +265,7 @@ int main() {
     resultValue = shmctl(shmid, IPC_RMID, NULL);
 
     //Check if shmctl succeeded.
-    if(resultValue < 0){
+    if (resultValue < 0) {
 
         perror("Error: memory release failed.\n");
         exit(1);
@@ -271,7 +274,7 @@ int main() {
     resultValue = close(file);
 
     //Check if close succeeded.
-    if(resultValue < 0){
+    if (resultValue < 0) {
 
         perror("Error: close failed.\n");
         exit(1);
@@ -349,15 +352,12 @@ void EndAllThreads(pthread_t *threads) {
     int resultValue;
     int i;
 
-    //Stop all the threads.
-    stopAllThreads = 1;
-
     for (i = 0; i < ARR_SIZE; ++i) {
 
         resultValue = pthread_join(threads[i], NULL);
 
         //Check if pthread_join succeeded.
-        if(resultValue != 0){
+        if (resultValue != 0) {
 
             perror("Error: pthread_join failed.\n");
             exit(1);
@@ -434,8 +434,19 @@ void *ThreadFunction(void *arg) {
 
         printf("Took command %c\n", command);
 
+        if (command == 'h') {
+
+            stopAllThreads = 1;
+        }
+
         //Unlock.
         UnlockMutex(&queueMutex);
+
+        //Check if threads need to stop.
+        if (stopAllThreads) {
+
+            break;
+        }
 
         if (command == 'f') {
 
@@ -459,6 +470,9 @@ void *ThreadFunction(void *arg) {
         }
     }
 
+    printf("Exiting thread\n");
+
+    //TODO add pthread_exit if needed.
 }
 
 void SleepCommand(char command) {
