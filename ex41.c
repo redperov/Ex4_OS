@@ -16,6 +16,7 @@
 #include <signal.h>
 #include <memory.h>
 #include <ctype.h>
+#include <sys/sem.h>
 
 #define SHM_SIZE 4096
 
@@ -86,7 +87,7 @@ int main(){
         exit(1);
     }
 
-    semid = semget(key, 1, 0);
+    semid = semget(key, 2, 0);
 
     //Check if semget succeeded.
     if(semid < 0){
@@ -95,7 +96,7 @@ int main(){
         exit(1);
     }
 
-    sops->sem_num = 0;
+//    sops->sem_num = 0;
     sops->sem_flg = 0;
 
     stop = 0;
@@ -107,33 +108,24 @@ int main(){
         //Receive command from user.
         command = GetUserCommand();
 
-        //Lock.
+        //Lock writer.
+        sops->sem_num = 1;
         sops->sem_op = -1;
-        resultValue = semop(semid, sops, 1);
+        semop(semid, sops, 1);
 
-        //Check if semop succeeded.
-        if(resultValue < 0){
-
-            perror("Error: semop failed.\n");
-            exit(1);
-        }
-
-        //Handle user command.
         stop = HandleUserCommand(command, data);
 
-        //Unlock.
+        printf("Client: Wrote to shared memory\n");
+
+        //Unlock server reader.
+        sops->sem_num = 0;
         sops->sem_op = 1;
-        resultValue = semop(semid, sops, 1);
+        semop(semid, sops, 1);
 
-        //Check if semop succeeded.
-        if(resultValue < 0){
-
-            perror("Error: semop failed.\n");
-            exit(1);
-        }
+        printf("Client: unlocked server\n");
     }
 
-    //Detach shared memory.
+    //Detach from shared memory.
     resultValue = shmdt(data);
 
     //Check if shmdt succeeded.
@@ -163,9 +155,9 @@ void WriteMessage(char *message){
 char GetUserCommand(){
 
     int readResult;
-    char command;
-
-    readResult = read(0, &command, 1);
+    char command[2];
+    
+    readResult = read(0, command, 2);
 
     //Check if read succeeded.
     if (readResult < 0) {
@@ -174,9 +166,9 @@ char GetUserCommand(){
         exit(1);
     }
 
-    command = tolower(command);
+    command[0] = tolower(command[0]);
 
-    return command;
+    return command[0];
 }
 
 int HandleUserCommand(char command, char *data){

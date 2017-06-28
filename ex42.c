@@ -71,18 +71,36 @@ int GenerateRandomValue();
 
 void WriteToFile(pthread_t identifier);
 
-void StartThreadPool(pthread_t *threads);
+void CreateThreadPool(pthread_t *threads);
 
 void *ThreadFunction(void *arg);
 
-int HandleCommand(char command);
+int HandleCommand(char command, pthread_t *threads);
 
-int   count_internal;
-int   file;
-char  *data;
-Queue *jobsQueue;
+void SleepCommand(char command);
+
+void SemLock(int semid, struct sembuf *sops);
+
+void SemUnlock(int semid, struct sembuf *sops);
+
+void InitMutexes();
+
+void LockMutex(pthread_mutex_t *mutex);
+
+void UnlockMutex(pthread_mutex_t *mutex);
+
+void DestroyMutexes();
+
+void KillAllThreads(pthread_t *threads);
+
+int             count_internal;
+int             file;
+int             stopAllThreads;
+char            *data;
+Queue           *jobsQueue;
 pthread_mutex_t writeMutex;
 pthread_mutex_t counterMutex;
+pthread_mutex_t queueMutex;
 
 
 int main() {
@@ -94,11 +112,11 @@ int main() {
     int           semid;
     int           resultValue;
     semun         semarg;
-    struct sembuf sops[2];
-    char  command;
+    struct sembuf sops[1];
+    char          command;
 
     //Create file.
-    file = open("318810637.txt", O_CREAT, 0777);
+    file = open("318810637.txt", O_CREAT | O_WRONLY, 0777);
 
     //Check if open succeeded.
     if (file < 0) {
@@ -144,10 +162,13 @@ int main() {
     //Queue *jobsQueue; TODO decide if to leave as global or make local.
     jobsQueue = InitializeQueue();
 
+    //Create thread pool.
+    CreateThreadPool(threads);
+
     //Initialize global counter.
     count_internal = 0;
 
-    semid = semget(key, 1, 0666 | IPC_CREAT);
+    semid = semget(key, 2, 0666 | IPC_CREAT);
 
     //Check if semget succeeded.
     if (semid < 0) {
@@ -156,10 +177,10 @@ int main() {
         exit(1);
     }
 
-    //Initialize semaphore value to 1.
-    semarg.val = 1;
+    //Initialize semaphore value to 0.
+    semarg.val = 0;
 
-    //Semaphore #1.
+    //Semaphore #0.
     resultValue = semctl(semid, 0, SETVAL, semarg);
 
     //Check if semctl succeeded.
@@ -169,7 +190,10 @@ int main() {
         exit(1);
     }
 
-    //Semaphore #2.
+    //Initialize semaphore value to 1.
+    semarg.val = 1;
+
+    //Semaphore #1.
     resultValue = semctl(semid, 1, SETVAL, semarg);
 
     //Check if semctl succeeded.
@@ -180,49 +204,190 @@ int main() {
     }
 
     //Set sembuf values.
-    sops->sem_num = 0;
+    //sops->sem_num = 0;
     sops->sem_flg = 0;
 
     stop = 0;
 
     while (!stop) {
 
-        //Lock.
-        SemLock(semid, sops);
+        printf("Waiting for client\n");
+
+        //Wait for client.
+        sops->sem_num = 0;
+        sops->sem_op  = -1;
+        semop(semid, sops, 1);
 
         //Read command from shared memory.
         command = data[0];
 
         //Handle command.
-        stop = HandleCommand(command);
 
-        //Unlock.
-        SemUnlock(semid, sops);
+        printf("read data\n");
+        stop = HandleCommand(command, threads);
+        printf("Handled command\n");
+
+        //Unlock client writer.
+        sops->sem_num = 1;
+        sops->sem_op  = 1;
+        semop(semid, sops, 1);
+
+        printf("Released client\n");
+    }
+
+    //Delete all semaphores.
+    resultValue = semctl(semid, 0, IPC_RMID, semarg);
+
+    //Check if semctl succeeded.
+    if(resultValue < 0){
+
+        perror("Error: semctl delete failed.\n");
+        exit(1);
+    }
+
+    //Delete all mutexes.
+    DestroyMutexes();
+
+    //Detach from shared memory.
+    resultValue = shmdt(data);
+
+    //Check if shmdt succeeded.
+    if(resultValue < 0){
+
+        perror("Error: shmdt failed.\n");
+        exit(1);
+    }
+
+    //Free shared memory.
+    resultValue = shmctl(shmid, IPC_RMID, NULL);
+
+    //Check if shmctl succeeded.
+    if(resultValue < 0){
+
+        perror("Error: memory release failed.\n");
+        exit(1);
+    }
+
+    resultValue = close(file);
+
+    //Check if close succeeded.
+    if(resultValue < 0){
+
+        perror("Error: close failed.\n");
+        exit(1);
     }
 
     //TODO free memory.
 }
 
-int HandleCommand(char command) {
-
-    //TODO add mutex
+int HandleCommand(char command, pthread_t *threads) {
 
     if (command == 'g') {
-        //TODO add identifier and internal_count to id.txt file
+
+        //Kill all the threads.
+        KillAllThreads(threads);
 
         return 1;
 
     } else if (command == 'h') {
-        //TODO handle that case
+
+        //End all the threads.
+        EndAllThreads(threads);
 
         return 1;
     } else {
 
-        //TODO handle case when I dequeue at the same time?
+        //Lock.
+        LockMutex(&queueMutex);
+
         Enqueue(jobsQueue, command);
+
+        //Unlock.
+        UnlockMutex(&queueMutex);
     }
 
     return 0;
+}
+
+void KillAllThreads(pthread_t *threads) {
+
+    int resultValue;
+    int i;
+
+    printf("Killing all threads\n");
+
+    for (i = 0; i < ARR_SIZE; ++i) {
+
+        resultValue = pthread_cancel(threads[i]);
+
+        //Check if pthread_cancel succeeded.
+        if (resultValue != 0) {
+
+            perror("Error: pthread_cancel failed.\n");
+            exit(1);
+        }
+
+        printf("Killed thread %d", i);
+    }
+
+    //Get thread identifier.
+    pthread_t identifier = pthread_self();
+
+    //Lock.
+    LockMutex(&writeMutex);
+
+    //Write identifier to file.
+    WriteToFile(identifier);
+
+    //Unlock.
+    UnlockMutex(&writeMutex);
+
+}
+
+void EndAllThreads(pthread_t *threads) {
+
+    int resultValue;
+    int i;
+
+    //Stop all the threads.
+    stopAllThreads = 1;
+
+    for (i = 0; i < ARR_SIZE; ++i) {
+
+        resultValue = pthread_join(threads[i], NULL);
+
+        //Check if pthread_join succeeded.
+        if(resultValue != 0){
+
+            perror("Error: pthread_join failed.\n");
+            exit(1);
+        }
+
+        //Get thread identifier.
+        pthread_t identifier = threads[i];
+
+        //Lock.
+        LockMutex(&writeMutex);
+
+        //Write identifier to file.
+        WriteToFile(identifier);
+
+        //Unlock.
+        UnlockMutex(&writeMutex);
+    }
+
+    //Get thread identifier.
+    pthread_t identifier = pthread_self();
+
+    //Lock.
+    LockMutex(&writeMutex);
+
+    //Write identifier to file.
+    WriteToFile(identifier);
+
+    //Unlock.
+    UnlockMutex(&writeMutex);
+
 }
 
 void CreateThreadPool(pthread_t *threads) {
@@ -230,12 +395,14 @@ void CreateThreadPool(pthread_t *threads) {
     int i;
     int resultValue;
 
+    stopAllThreads = 0;
+
     for (i = 0; i < ARR_SIZE; ++i) {
 
         resultValue = pthread_create(&threads[i], NULL, ThreadFunction, NULL);
 
         //Check if pthread_create succeeded.
-        if (resultValue < 0) {
+        if (resultValue != 0) {
 
             perror("Error: pthread_create failed.\n");
             exit(1);
@@ -246,19 +413,29 @@ void CreateThreadPool(pthread_t *threads) {
 void *ThreadFunction(void *arg) {
 
     //Variable declarations.
-    int stop;
     char command;
 
-    stop = 0;
+    while (!stopAllThreads) {
 
-    while(!stop){
+        //Lock.
+        LockMutex(&queueMutex);
 
-        //TODO lock sem
+        //Check if queue is empty.
+        if (IsEmpty(jobsQueue)) {
 
-        //TODO add check somewhere to run only if queue is not empty.
+            //Unlock.
+            UnlockMutex(&queueMutex);
+            continue;
+        }
+
         //Get command from jobs queue.
-        command = Top(jobsQueue);
+        command   = Top(jobsQueue);
         jobsQueue = Dequeue(jobsQueue);
+
+        printf("Took command %c\n", command);
+
+        //Unlock.
+        UnlockMutex(&queueMutex);
 
         if (command == 'f') {
 
@@ -276,6 +453,7 @@ void *ThreadFunction(void *arg) {
 
         } else {
 
+            printf("Entering sleep command.\n");
             //Perform sleep command.
             SleepCommand(command);
         }
@@ -283,20 +461,34 @@ void *ThreadFunction(void *arg) {
 
 }
 
-void SleepCommand(char command){
+void SleepCommand(char command) {
 
     int             x   = GenerateRandomValue();
-    int             add = command - '0';
+    int             add = command - 'a' + 1;
     struct timespec ts  = {0, x};
+    int             resultValue;
+
+    printf("Starting sleep.\n");
 
     //Sleep.
-    nanosleep(&ts, NULL);
+    resultValue = nanosleep(&ts, NULL);
+
+    //Check if nanosleep succeeded.
+    if (resultValue < 0) {
+
+        perror("Error: nanosleep failed.\n");
+        exit(1);
+    }
+
+    printf("Finished sleep.\n");
 
     //Lock.
     LockMutex(&counterMutex);
 
     //Add to global counter.
     count_internal += add;
+
+    printf("Counter: %d\n", count_internal);
 
     //Unlock.
     UnlockMutex(&counterMutex);
@@ -333,14 +525,14 @@ void SemUnlock(int semid, struct sembuf *sops) {
     }
 }
 
-void InitMutexes(){
+void InitMutexes() {
 
     int resultValue;
 
     resultValue = pthread_mutex_init(&writeMutex, NULL);
 
     //Check if mutex_init succeeded.
-    if(resultValue < 0){
+    if (resultValue < 0) {
 
         perror("Error: mutex_init failed.\n");
         exit(1);
@@ -349,49 +541,58 @@ void InitMutexes(){
     resultValue = pthread_mutex_init(&counterMutex, NULL);
 
     //Check if mutex_init succeeded.
-    if(resultValue < 0){
+    if (resultValue < 0) {
+
+        perror("Error: mutex_init failed.\n");
+        exit(1);
+    }
+
+    resultValue = pthread_mutex_init(&queueMutex, NULL);
+
+    //Check if mutex_init succeeded.
+    if (resultValue < 0) {
 
         perror("Error: mutex_init failed.\n");
         exit(1);
     }
 }
 
-void LockMutex(pthread_mutex_t *mutex){
+void LockMutex(pthread_mutex_t *mutex) {
 
     int resultValue;
 
     resultValue = pthread_mutex_lock(mutex);
 
     //Check if mutex_lock succeeded.
-    if(resultValue < 0){
+    if (resultValue < 0) {
 
         perror("Error: mutex_lock failed.\n");
         exit(1);
     }
 }
 
-void UnlockMutex(pthread_mutex_t *mutex){
+void UnlockMutex(pthread_mutex_t *mutex) {
 
     int resultValue;
 
     resultValue = pthread_mutex_unlock(mutex);
 
     //Check if mutex_unlock succeeded.
-    if(resultValue < 0){
+    if (resultValue < 0) {
 
         perror("Error: mutex_unlock failed.\n");
         exit(1);
     }
 }
 
-void DestroyMutexes(){
+void DestroyMutexes() {
 
     int resultValue;
 
     resultValue = pthread_mutex_destroy(&writeMutex);
 
     //Check if mutex_destroy succeeded.
-    if(resultValue < 0){
+    if (resultValue < 0) {
 
         perror("Error: mutex_destroy failed.\n");
         exit(1);
@@ -400,7 +601,16 @@ void DestroyMutexes(){
     resultValue = pthread_mutex_destroy(&counterMutex);
 
     //Check if mutex_destroy succeeded.
-    if(resultValue < 0){
+    if (resultValue < 0) {
+
+        perror("Error: mutex_destroy failed.\n");
+        exit(1);
+    }
+
+    resultValue = pthread_mutex_destroy(&queueMutex);
+
+    //Check if mutex_destroy succeeded.
+    if (resultValue < 0) {
 
         perror("Error: mutex_destroy failed.\n");
         exit(1);
@@ -424,8 +634,12 @@ void WriteToFile(pthread_t identifier) {
     int  writeResult;
     char buff[256];
 
-    sprintf(buff, "thread identifier is %d and internal_count is %d\n",
-            identifier, count_internal);
+    unsigned long id = (unsigned long) identifier;
+
+    printf("Writing to file id %lu\n", id);
+
+    sprintf(buff, "thread identifier is %lu and internal_count is %d\n",
+            id, count_internal);
 
     writeResult = write(file, buff, strlen(buff));
 
@@ -462,37 +676,33 @@ Queue *Enqueue(Queue *queue, char data) {
     newNode->data = data;
     newNode->next = NULL;
 
-    if (queue->rear == NULL) {
 
-        queue->rear = newNode;
-        queue->head = queue->rear;
+    if (queue->head == NULL) {
+
+        queue->head = newNode;
     } else {
 
-        Node *temp = queue->rear;
-        newNode->next = temp;
-        queue->rear   = newNode;
+        queue->rear->next = newNode;
     }
+
+    queue->rear = newNode;
 
     return queue;
 }
 
 Queue *Dequeue(Queue *queue) {
 
+    Node *save;
+
     if (queue->head == NULL) {
 
         return queue;
+    } else {
+
+        save = queue->head;
+        queue->head = queue->head->next;
+        free(save);
     }
-
-    Node *temp = queue->rear;
-
-    while (temp->next != queue->head) {
-
-        temp = temp->next;
-    }
-
-    free(queue->head);
-    temp->next  = NULL;
-    queue->head = temp;
 
     return queue;
 }
