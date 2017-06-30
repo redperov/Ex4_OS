@@ -17,6 +17,7 @@
 #include <memory.h>
 #include <ctype.h>
 #include <sys/sem.h>
+#include <errno.h>
 
 #define SHM_SIZE 4096
 
@@ -25,7 +26,7 @@ typedef union {
     int             val;
     struct semid_ds *buf;
     ushort          *array;
-}   semun;
+} semun;
 
 /**
  * function name: WriteMessage.
@@ -45,16 +46,16 @@ char GetUserCommand();
 
 int HandleUserCommand(char command, char *data);
 
-int main(){
+int main() {
 
-    key_t key;
-    int shmid;
-    int semid;
-    int stop;
-    int resultValue;
-    char command;
-    char *data;
-    semun semarg;
+    key_t         key;
+    int           shmid;
+    int           semid;
+    int           stop;
+    int           resultValue;
+    char          command;
+    char          *data;
+    semun         semarg;
     struct sembuf sops[1];
 
     //Create key.
@@ -90,18 +91,18 @@ int main(){
     semid = semget(key, 2, 0);
 
     //Check if semget succeeded.
-    if(semid < 0){
+    if (semid < 0) {
 
         perror("Error: semget faild.\n");
         exit(1);
     }
 
-//    sops->sem_num = 0;
+    //Set sembuf flag.
     sops->sem_flg = 0;
 
     stop = 0;
 
-    while(!stop){
+    while (!stop) {
 
         WriteMessage("Please enter request code\n");
 
@@ -110,17 +111,48 @@ int main(){
 
         //Lock writer.
         sops->sem_num = 1;
-        sops->sem_op = -1;
-        semop(semid, sops, 1);
+        sops->sem_op  = -1;
+        resultValue = semop(semid, sops, 1);
 
+        //Check if semop succeeded.
+        if (resultValue < 0) {
+
+            //Check if the semaphore broke.
+            if(errno == 43 || errno == 22){
+
+                //TODO delete
+                printf("Errno: %d\n", errno);
+                break;
+            }
+
+            perror("Error: semop failed.\n");
+            exit(1);
+        }
+
+        //Handle user command.
         stop = HandleUserCommand(command, data);
 
         printf("Client: Wrote to shared memory\n");
 
         //Unlock server reader.
         sops->sem_num = 0;
-        sops->sem_op = 1;
-        semop(semid, sops, 1);
+        sops->sem_op  = 1;
+        resultValue = semop(semid, sops, 1);
+
+        //Check if semop succeeded.
+        if (resultValue < 0) {
+
+            //Check if the semaphore broke.
+            if(errno == 43 || errno == 22){
+
+                //TODO delete
+                printf("Errno: %d\n", errno);
+                break;
+            }
+
+            perror("Error: semop failed.\n");
+            exit(1);
+        }
 
         printf("Client: unlocked server\n");
     }
@@ -129,16 +161,18 @@ int main(){
     resultValue = shmdt(data);
 
     //Check if shmdt succeeded.
-    if(resultValue < 0){
+    if (resultValue < 0) {
 
         perror("Error: shmdt failed.\n");
         exit(1);
     }
 
+    printf("Exiting client\n");
+
     //TODO check if there are other resources to clean, like the semaphore
 }
 
-void WriteMessage(char *message){
+void WriteMessage(char *message) {
 
     int writeResult;
 
@@ -152,11 +186,11 @@ void WriteMessage(char *message){
     }
 }
 
-char GetUserCommand(){
+char GetUserCommand() {
 
-    int readResult;
+    int  readResult;
     char command[2];
-    
+
     readResult = read(0, command, 2);
 
     //Check if read succeeded.
@@ -171,13 +205,12 @@ char GetUserCommand(){
     return command[0];
 }
 
-int HandleUserCommand(char command, char *data){
+int HandleUserCommand(char command, char *data) {
 
-    if(command == 'i'){
+    if (command == 'i') {
 
         return 1;
-    }
-    else{
+    } else {
 
         //TODO make sure the server finished reading
         data[0] = command;

@@ -93,6 +93,8 @@ void DestroyMutexes();
 
 void KillAllThreads(pthread_t *threads);
 
+void EndAllThreads(pthread_t *threads);
+
 int             count_internal;
 int             file;
 int             stopAllThreads;
@@ -219,13 +221,19 @@ int main() {
         //Wait for client.
         sops->sem_num = 0;
         sops->sem_op  = -1;
-        semop(semid, sops, 1);
+        resultValue = semop(semid, sops, 1);
+
+        //Check if semop succeeded.
+        if (resultValue < 0) {
+
+            perror("Error: semop failed.\n");
+            exit(1);
+        }
 
         //Read command from shared memory.
         command = data[0];
 
         //Handle command.
-
         printf("read data\n");
         stop = HandleCommand(command, threads);
         printf("Handled command\n");
@@ -233,7 +241,14 @@ int main() {
         //Unlock client writer.
         sops->sem_num = 1;
         sops->sem_op  = 1;
-        semop(semid, sops, 1);
+        resultValue = semop(semid, sops, 1);
+
+        //Check if semop succeeded.
+        if (resultValue < 0) {
+
+            perror("Error: semop failed.\n");
+            exit(1);
+        }
 
         printf("Released client\n");
     }
@@ -330,7 +345,7 @@ void KillAllThreads(pthread_t *threads) {
             exit(1);
         }
 
-        printf("Killed thread %d", i);
+        printf("Killed thread %d\n", i);
     }
 
     //Get thread identifier.
@@ -362,6 +377,8 @@ void EndAllThreads(pthread_t *threads) {
             perror("Error: pthread_join failed.\n");
             exit(1);
         }
+
+        printf("joining thread %d\n", i);
 
         //Get thread identifier.
         pthread_t identifier = threads[i];
