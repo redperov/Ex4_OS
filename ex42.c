@@ -309,6 +309,15 @@ int HandleCommand(char command, pthread_t *threads) {
 
     } else if (command == 'h') {
 
+        //Lock.
+        LockMutex(&queueMutex);
+
+        //Insert job to jobs queue.
+        Enqueue(jobsQueue, command);
+
+        //Unlock.
+        UnlockMutex(&queueMutex);
+
         //End all the threads.
         EndAllThreads(threads);
 
@@ -318,6 +327,7 @@ int HandleCommand(char command, pthread_t *threads) {
         //Lock.
         LockMutex(&queueMutex);
 
+        //Insert job to jobs queue.
         Enqueue(jobsQueue, command);
 
         //Unlock.
@@ -367,6 +377,7 @@ void EndAllThreads(pthread_t *threads) {
     int resultValue;
     int i;
 
+    //Join all threads.
     for (i = 0; i < ARR_SIZE; ++i) {
 
         resultValue = pthread_join(threads[i], NULL);
@@ -379,6 +390,10 @@ void EndAllThreads(pthread_t *threads) {
         }
 
         printf("joining thread %d\n", i);
+    }
+
+    //Write all threads ids.
+    for (i = 0; i < ARR_SIZE; ++i) {
 
         //Get thread identifier.
         pthread_t identifier = threads[i];
@@ -451,6 +466,7 @@ void *ThreadFunction(void *arg) {
 
         printf("Took command %c\n", command);
 
+        //Check if need to stop threads.
         if (command == 'h') {
 
             stopAllThreads = 1;
