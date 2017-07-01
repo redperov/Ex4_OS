@@ -32,6 +32,8 @@ typedef struct node {
 //Queue data structure.
 typedef struct {
 
+    int  counter;
+    int  isActive;
     Node *head;
     Node *rear;
 } Queue;
@@ -94,6 +96,8 @@ void DestroyMutexes();
 void KillAllThreads(pthread_t *threads);
 
 void EndAllThreads(pthread_t *threads);
+
+void FreeQueue(Queue *queue);
 
 int             count_internal;
 int             file;
@@ -163,7 +167,7 @@ int main() {
     //Create jobs queue.
     //Queue *jobsQueue; TODO decide if to leave as global or make local.
     jobsQueue = InitializeQueue();
-    
+
     //Initialize mutexes.
     InitMutexes();
 
@@ -295,6 +299,9 @@ int main() {
         exit(1);
     }
 
+    //Free jobs queue.
+    FreeQueue(jobsQueue);
+
     //TODO free memory.
 }
 
@@ -313,7 +320,10 @@ int HandleCommand(char command, pthread_t *threads) {
         LockMutex(&queueMutex);
 
         //Insert job to jobs queue.
-        Enqueue(jobsQueue, command);
+        //Enqueue(jobsQueue, command);
+
+        //Inactivate jobs queue.
+        jobsQueue->isActive = 0;
 
         //Unlock.
         UnlockMutex(&queueMutex);
@@ -447,7 +457,7 @@ void *ThreadFunction(void *arg) {
     //Variable declarations.
     char command;
 
-    while (!stopAllThreads) {
+    while (!stopAllThreads || jobsQueue->counter > 0) {
 
         //Lock.
         LockMutex(&queueMutex);
@@ -467,19 +477,13 @@ void *ThreadFunction(void *arg) {
         printf("Took command %c\n", command);
 
         //Check if need to stop threads.
-        if (command == 'h') {
+        if (jobsQueue->counter == 0) {
 
             stopAllThreads = 1;
         }
 
         //Unlock.
         UnlockMutex(&queueMutex);
-
-        //Check if threads need to stop.
-        if (stopAllThreads) {
-
-            break;
-        }
 
         if (command == 'f') {
 
@@ -704,6 +708,9 @@ Queue *InitializeQueue() {
     queue->rear = NULL;
     queue->head = NULL;
 
+    queue->counter = 0;
+    queue->isActive = 1;
+
     return queue;
 }
 
@@ -734,6 +741,12 @@ Queue *Enqueue(Queue *queue, char data) {
 
     queue->rear = newNode;
 
+    //Increment only if queue is active.
+    if(queue->isActive){
+
+        queue->counter++;
+    }
+
     return queue;
 }
 
@@ -751,7 +764,17 @@ Queue *Dequeue(Queue *queue) {
         free(save);
     }
 
+    queue->counter--;
+
     return queue;
+}
+
+void FreeQueue(Queue *queue) {
+
+    while (!IsEmpty(queue)) {
+
+        queue = Dequeue(queue);
+    }
 }
 
 //TODO delete if not needed
