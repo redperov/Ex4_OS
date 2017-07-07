@@ -20,7 +20,8 @@
 
 
 #define ARR_SIZE 5
-#define SHM_SIZE 4096
+//TODO minimize size of memory
+#define SHM_SIZE 2
 
 //Queue node.
 typedef struct node {
@@ -44,18 +45,6 @@ typedef union {
     struct semid_ds *buf;
     ushort          *array;
 } semun;
-
-//
-//
-////int           threadsSemid;
-//
-//
-//
-////struct sembuf sbThreads[1];
-//////key_t         keyThreads;
-//int           semid;
-//struct sembuf sops[1];
-//semun         semarg;
 
 void Display(Queue *queue);
 
@@ -165,7 +154,6 @@ int main() {
     pthread_t threads[ARR_SIZE];
 
     //Create jobs queue.
-    //Queue *jobsQueue; TODO decide if to leave as global or make local.
     jobsQueue = InitializeQueue();
 
     //Initialize mutexes.
@@ -301,8 +289,6 @@ int main() {
 
     //Free jobs queue.
     FreeQueue(jobsQueue);
-
-    //TODO free memory.
 }
 
 int HandleCommand(char command, pthread_t *threads) {
@@ -439,6 +425,7 @@ void CreateThreadPool(pthread_t *threads) {
 
     stopAllThreads = 0;
 
+    //Initialize threads.
     for (i = 0; i < ARR_SIZE; ++i) {
 
         resultValue = pthread_create(&threads[i], NULL, ThreadFunction, NULL);
@@ -477,7 +464,7 @@ void *ThreadFunction(void *arg) {
         printf("Took command %c\n", command);
 
         //Check if need to stop threads.
-        if (jobsQueue->counter == 0) {
+        if (jobsQueue->counter == 0 && !jobsQueue->isActive) {
 
             stopAllThreads = 1;
         }
@@ -508,8 +495,6 @@ void *ThreadFunction(void *arg) {
     }
 
     printf("Exiting thread\n");
-
-    //TODO add pthread_exit if needed.
 }
 
 void SleepCommand(char command) {
@@ -640,31 +625,58 @@ void DestroyMutexes() {
 
     int resultValue;
 
-    resultValue = pthread_mutex_destroy(&writeMutex);
+    //Try to lock the mutex.
+    resultValue = pthread_mutex_trylock(&writeMutex);
 
-    //Check if mutex_destroy succeeded.
-    if (resultValue < 0) {
+    //Check if trylock succeeded.
+    if(resultValue == 0){
 
-        perror("Error: mutex_destroy failed.\n");
-        exit(1);
+        UnlockMutex(&writeMutex);
+
+        resultValue = pthread_mutex_destroy(&writeMutex);
+
+        //Check if mutex_destroy succeeded.
+        if (resultValue < 0) {
+
+            perror("Error: mutex_destroy failed.\n");
+            exit(1);
+        }
     }
 
-    resultValue = pthread_mutex_destroy(&counterMutex);
+    //Try to lock the mutex.
+    resultValue = pthread_mutex_trylock(&counterMutex);
 
-    //Check if mutex_destroy succeeded.
-    if (resultValue < 0) {
+    //Check if trylock succeeded.
+    if(resultValue == 0){
 
-        perror("Error: mutex_destroy failed.\n");
-        exit(1);
+        UnlockMutex(&counterMutex);
+
+        resultValue = pthread_mutex_destroy(&counterMutex);
+
+        //Check if mutex_destroy succeeded.
+        if (resultValue < 0) {
+
+            perror("Error: mutex_destroy failed.\n");
+            exit(1);
+        }
     }
 
-    resultValue = pthread_mutex_destroy(&queueMutex);
+    //Try to lock the mutex.
+    resultValue = pthread_mutex_trylock(&queueMutex);
 
-    //Check if mutex_destroy succeeded.
-    if (resultValue < 0) {
+    //Check if trylock succeeded.
+    if(resultValue == 0){
 
-        perror("Error: mutex_destroy failed.\n");
-        exit(1);
+        UnlockMutex(&queueMutex);
+
+        resultValue = pthread_mutex_destroy(&queueMutex);
+
+        //Check if mutex_destroy succeeded.
+        if (resultValue < 0) {
+
+            perror("Error: mutex_destroy failed.\n");
+            exit(1);
+        }
     }
 }
 

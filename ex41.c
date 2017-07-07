@@ -19,7 +19,7 @@
 #include <sys/sem.h>
 #include <errno.h>
 
-#define SHM_SIZE 4096
+#define SHM_SIZE 2
 
 typedef union {
 
@@ -108,6 +108,12 @@ int main() {
 
         //Receive command from user.
         command = GetUserCommand();
+
+        //Check if input is legal.
+        if(command < 'a' || command > 'i'){
+
+            continue;
+        }
 
         //Lock writer.
         sops->sem_num = 1;
